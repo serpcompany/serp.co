@@ -2,6 +2,8 @@ name: Verify badge on issue
 on:
   issue_comment:
     types: [created]
+  issues:
+    types: [opened]
 
 permissions:
   issues: write
@@ -9,24 +11,27 @@ permissions:
 jobs:
   verify:
     if: >-
-      !github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/check-badge')
+      (github.event_name == 'issues') ||
+      (!github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/check-badge'))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Extract website URL from issue body
         id: extract
         uses: actions/github-script@v7
         with:
           script: |
-            const body = context.payload.issue.body || '';
-            const match = body.match(/Product URL:\s*(https?:\/\/\S+)/i);
+            const body = (context.payload.issue || context.payload).body || '';
+            const match = body.match(/URL:\s*(https?:\/\/\S+)/i);
             if (!match) {
-              core.setFailed('Could not find Product URL in issue body');
+              core.setFailed('Could not find a URL in issue body');
               return;
             }
             core.setOutput('url', match[1].replace(/[\s,]+$/, ''));
+
+            // Get issue author
+            const issue = context.payload.issue || context.payload;
+            core.setOutput('author', issue.user.login);
 
       - name: Check for badge / backlink
         id: check
@@ -34,7 +39,7 @@ jobs:
         with:
           script: |
             const url = '${{ steps.extract.outputs.url }}';
-            const domain = 'serp.co';
+            const domain = context.repo.repo;
 
             let html;
             try {
@@ -61,7 +66,7 @@ jobs:
               const detail = hasToken ? 'Badge with verify token found.' : 'Backlink found (no verify token).';
               core.setOutput('message', `Badge verified on ${url} — ${detail}`);
             } else {
-              core.setOutput('message', `No backlink to ${domain} found on ${url}. Make sure the badge snippet is placed on a publicly visible page.`);
+              core.setOutput('message', `No backlink to ${domain} found on ${url}.`);
             }
 
       - name: Post result comment
@@ -70,21 +75,31 @@ jobs:
           script: |
             const found = '${{ steps.check.outputs.found }}' === 'true';
             const message = '${{ steps.check.outputs.message }}';
-            const icon = found ? ':white_check_mark:' : ':x:';
-            const label = found ? 'verified' : null;
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `${icon} **Badge Check**\n\n${message}`
-            });
+            const author = '${{ steps.extract.outputs.author }}';
+            const domain = context.repo.repo;
+            const issueNumber = (context.payload.issue || context.payload).number;
 
             if (found) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `:white_check_mark: **Badge Check**\n\n${message}`
+              });
+
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: issueNumber,
                 labels: ['verified']
+              });
+            } else {
+              const badgeSnippet = `<a href="https://${domain}" target="_blank" title="Featured on ${domain}">\n  <img src="https://${domain}/badge/featured-on-${domain}-light.svg" alt="Featured on ${domain}" width="200" height="50" />\n</a>`;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `:x: **Badge Check**\n\n${message}\n\n---\n\n@${author} — To get your listing approved, please add a **"Featured on ${domain}"** badge to your website.\n\n**Steps:**\n1. Copy the badge code below\n2. Paste it into your website's HTML (footer, sidebar, or homepage)\n3. Make sure it's on a publicly accessible page (not behind auth)\n4. Come back here and comment \`/check-badge\` to re-verify\n\n**Badge code:**\n\`\`\`html\n${badgeSnippet}\n\`\`\`\n\n**Badge preview:**\n\n![Featured on ${domain}](https://${domain}/badge/featured-on-${domain}-light.svg)`
               });
             }
