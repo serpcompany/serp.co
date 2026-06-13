@@ -1,0 +1,87 @@
+name: Verify badge on issue
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  verify:
+    if: >-
+      !github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/check-badge')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract website URL from issue body
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            const match = body.match(/Product URL:\s*(https?:\/\/\S+)/i);
+            if (!match) {
+              core.setFailed('Could not find Product URL in issue body');
+              return;
+            }
+            core.setOutput('url', match[1].replace(/[\s,]+$/, ''));
+
+      - name: Check for badge / backlink
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.extract.outputs.url }}';
+            const domain = 'serp.co';
+
+            let html;
+            try {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 10000);
+              const resp = await fetch(url, {
+                headers: { 'User-Agent': 'DirectoryVerifier/1.0' },
+                signal: controller.signal,
+                redirect: 'follow'
+              });
+              clearTimeout(timeout);
+              html = await resp.text();
+            } catch (err) {
+              core.setOutput('found', 'false');
+              core.setOutput('message', `Could not reach ${url} — ${err.message}`);
+              return;
+            }
+
+            const hasBacklink = html.includes(domain);
+            const hasToken = /data-verify-token=/.test(html);
+
+            core.setOutput('found', String(hasBacklink));
+            if (hasBacklink) {
+              const detail = hasToken ? 'Badge with verify token found.' : 'Backlink found (no verify token).';
+              core.setOutput('message', `Badge verified on ${url} — ${detail}`);
+            } else {
+              core.setOutput('message', `No backlink to ${domain} found on ${url}. Make sure the badge snippet is placed on a publicly visible page.`);
+            }
+
+      - name: Post result comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const found = '${{ steps.check.outputs.found }}' === 'true';
+            const message = '${{ steps.check.outputs.message }}';
+            const icon = found ? ':white_check_mark:' : ':x:';
+            const label = found ? 'verified' : null;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `${icon} **Badge Check**\n\n${message}`
+            });
+
+            if (found) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['verified']
+              });
+            }
