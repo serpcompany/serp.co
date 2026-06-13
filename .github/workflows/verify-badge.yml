@@ -94,7 +94,16 @@ jobs:
                 labels: ['verified']
               });
             } else {
-              const badgeSnippet = `<a href="https://${domain}" target="_blank" title="Featured on ${domain}">\n  <img src="https://${domain}/badge/featured-on-${domain}-light.svg" alt="Featured on ${domain}" width="200" height="50" />\n</a>`;
+              // Parse submitter name from issue for listing URL
+              const issueBody = (context.payload.issue || context.payload).body || '';
+              const nameMatch = issueBody.match(/^Name:\s*(.+)$/m);
+              const productName = nameMatch?.[1]?.trim() || '';
+              let listingSlug;
+              const urlMatch = issueBody.match(/URL:\s*(https?:\/\/\S+)/i);
+              try { listingSlug = new URL(urlMatch[1]).hostname.replace(/^www\./, ''); } catch { listingSlug = productName.toLowerCase().replace(/[^\w.-]+/g, '-'); }
+              const listingUrl = `https://${domain}/products/${listingSlug}/reviews/`;
+
+              const badgeSnippet = `<a href="${listingUrl}" target="_blank" title="Featured on ${domain}">\n  <img src="https://${domain}/badge/featured-on-${domain}-light.svg" alt="Featured on ${domain}" width="200" height="50" />\n</a>`;
 
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
