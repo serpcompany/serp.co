@@ -1,0 +1,187 @@
+name: Approve listing from issue
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  approve:
+    if: >-
+      !github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/approve')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse listing from issue body
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+
+            // Parse fields — handle both "Product URL:" and "Extension URL:" etc.
+            const name = body.match(/^Name:\s*(.+)$/m)?.[1]?.trim();
+            const url = body.match(/URL:\s*(https?:\/\/\S+)/i)?.[1]?.replace(/[\s,]+$/, '');
+            const category = body.match(/^Category:\s*(.+)$/m)?.[1]?.trim();
+            const logoUrl = body.match(/^Logo URL:\s*(https?:\/\/\S+)$/m)?.[1]?.trim();
+
+            // Description is between "## Description" and the next "##" section
+            const descMatch = body.match(/## Description\s*\n+([\s\S]*?)(?=\n## |\n*$)/);
+            const description = descMatch?.[1]?.trim() || '';
+
+            // Additional notes for the full body content
+            const notesMatch = body.match(/## Additional notes\s*\n+([\s\S]*?)(?=\n## |\n*$)/);
+            const notes = notesMatch?.[1]?.trim() || '';
+
+            // Resource links
+            const rlSection = body.match(/## Resource links\s*\n+([\s\S]*?)(?=\n## |\n*$)/);
+            const resourceLinks = [];
+            if (rlSection) {
+              for (const m of rlSection[1].matchAll(/^- (.+?):\s*(https?:\/\/\S+)$/gm)) {
+                resourceLinks.push({ label: m[1].trim(), url: m[2].trim() });
+              }
+            }
+
+            // FAQs
+            const faqSection = body.match(/## FAQs\s*\n+([\s\S]*?)(?=\n## |\n*$)/);
+            const faqs = [];
+            if (faqSection) {
+              for (const m of faqSection[1].matchAll(/### (.+?)\n+([^#]+)/g)) {
+                faqs.push({ question: m[1].trim(), answer: m[2].trim() });
+              }
+            }
+
+            if (!name || !url) {
+              core.setFailed(`Could not parse required fields from issue body. Name: "${name}", URL: "${url}"`);
+              return;
+            }
+
+            // Derive slug from URL hostname (e.g. https://www.getkeep.ai → getkeep.ai)
+            let slug;
+            try {
+              const parsed = new URL(url);
+              slug = parsed.hostname.replace(/^www\./, '');
+            } catch {
+              slug = name.toLowerCase().replace(/[^\w.-]+/g, '-').replace(/^-|-$/g, '');
+            }
+
+            // Build the content body
+            let contentBody = `## Overview\n\n${description}`;
+            if (notes) {
+              contentBody += `\n\n${notes}`;
+            }
+
+            // Build the products.json entry
+            const entry = {
+              featured: false,
+              media: {},
+              product: {
+                categories: [category || 'other'],
+                productPage: url,
+                slug: slug,
+                tagline: description.split('\n')[0].substring(0, 150),
+                title: name
+              },
+              content: {
+                body: contentBody
+              },
+              relatedLinks: resourceLinks.length > 0 ? resourceLinks : [{ label: name, url: url }]
+            };
+
+            if (logoUrl) {
+              entry.media.logo = `/media/products/${slug}/logo.png`;
+            }
+
+            core.setOutput('slug', slug);
+            core.setOutput('name', name);
+            core.setOutput('entry', JSON.stringify(entry));
+            core.setOutput('issue_number', String(context.issue.number));
+            core.setOutput('site_repo', context.repo.repo);
+
+      - name: Create PR in source repo
+        id: create_pr
+        uses: actions/github-script@v7
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        with:
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          script: |
+            const owner = 'serpcompany';
+            const repo = 'json-directory-template';
+            const siteRepo = '${{ steps.parse.outputs.site_repo }}';
+            const slug = '${{ steps.parse.outputs.slug }}';
+            const name = '${{ steps.parse.outputs.name }}';
+            const issueNumber = '${{ steps.parse.outputs.issue_number }}';
+            const entry = JSON.parse(${{ toJSON(steps.parse.outputs.entry) }});
+            const branch = `listing/${siteRepo}/${slug}`;
+            const productsPath = `sites/${siteRepo}/products.json`;
+
+            // Get main branch SHA
+            const { data: mainRef } = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+            const baseSha = mainRef.object.sha;
+
+            // Create branch
+            try {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseSha });
+            } catch (err) {
+              if (err.status === 422) {
+                core.info(`Branch ${branch} already exists, updating...`);
+              } else {
+                throw err;
+              }
+            }
+
+            // Get current products.json
+            const { data: file } = await github.rest.repos.getContent({ owner, repo, path: productsPath, ref: 'main' });
+            const currentContent = Buffer.from(file.content, 'base64').toString('utf-8');
+            const products = JSON.parse(currentContent);
+
+            // Add the new entry
+            products[slug] = entry;
+
+            // Write updated file
+            const updatedContent = JSON.stringify(products, null, 2) + '\n';
+            await github.rest.repos.createOrUpdateFileContents({
+              owner,
+              repo,
+              path: productsPath,
+              message: `feat(listing): add ${name} to ${siteRepo}`,
+              content: Buffer.from(updatedContent).toString('base64'),
+              sha: file.sha,
+              branch
+            });
+
+            // Create PR
+            const { data: pr } = await github.rest.pulls.create({
+              owner,
+              repo,
+              title: `feat(listing): add ${name} to ${siteRepo}`,
+              head: branch,
+              base: 'main',
+              body: `## Summary\n- Add **${name}** (\`${slug}\`) to ${siteRepo} listings\n- Source: ${owner}/${siteRepo}#${issueNumber}\n\n🤖 Auto-generated from verified submission issue.`
+            });
+
+            core.setOutput('pr_url', pr.html_url);
+
+      - name: Comment on issue with PR link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prUrl = '${{ steps.create_pr.outputs.pr_url }}' || 'unknown';
+
+            // Try to get PR URL from previous step's outputs
+            // The PR URL is set in the previous step
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `:rocket: **Listing approved!**\n\nA pull request has been created to add this listing: ${prUrl}\n\nThe listing will go live once the PR is merged and deployed.`
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['approved']
+            });
