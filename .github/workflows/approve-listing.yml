@@ -103,9 +103,9 @@ jobs:
         id: create_pr
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         with:
-          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          github-token: ${{ secrets.GH_PAT }}
           script: |
             const owner = 'serpcompany';
             const repo = 'json-directory-template';
