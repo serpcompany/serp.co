@@ -58,25 +58,66 @@ jobs:
               return;
             }
 
-            // Check for <a href> or <img src> pointing to the exact domain (not subdomains like help.serp.co)
+            // Parse all <a> tags and check for dofollow links to exact domain
             const esc = domain.replace(/\./g, '\\.');
-            const linkPattern = new RegExp(`<a\\s[^>]*href=["']https?://(www\\.)?${esc}[/"']`, 'i');
-            const imgPattern = new RegExp(`<img\\s[^>]*src=["']https?://(www\\.)?${esc}[/"']`, 'i');
-            const hasLink = linkPattern.test(html);
-            const hasImage = imgPattern.test(html);
-            const hasToken = /data-verify-token=/.test(html);
+            const domainRegex = new RegExp(`^https?://(www\\.)?${esc}(/|$)`, 'i');
 
-            const hasBadge = hasLink || hasImage;
-            core.setOutput('found', String(hasBadge));
+            // Find all anchor tags
+            const anchorRegex = /<a\s[^>]*>/gi;
+            let foundDofollow = false;
+            let foundNofollow = false;
+            let foundBadgeImg = false;
+            let foundToken = false;
+            let match;
 
-            if (hasBadge) {
-              const details = [];
-              if (hasLink) details.push('backlink');
-              if (hasImage) details.push('badge image');
-              if (hasToken) details.push('verify token');
+            while ((match = anchorRegex.exec(html)) !== null) {
+              const tag = match[0];
+              // Extract href
+              const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+              if (!hrefMatch) continue;
+              const href = hrefMatch[1];
+
+              // Check if href points to our exact domain
+              if (!domainRegex.test(href)) continue;
+
+              // Check rel attribute for nofollow
+              const relMatch = tag.match(/rel=["']([^"']+)["']/i);
+              const relValues = relMatch ? relMatch[1].toLowerCase().split(/\s+/) : [];
+              const isNofollow = relValues.includes('nofollow');
+
+              if (isNofollow) {
+                foundNofollow = true;
+                continue;
+              }
+
+              foundDofollow = true;
+
+              // Check if this link wraps a badge image (look ahead in HTML for </a>)
+              const afterTag = html.substring(match.index + tag.length, match.index + tag.length + 500);
+              const closingA = afterTag.indexOf('</a>');
+              if (closingA !== -1) {
+                const inner = afterTag.substring(0, closingA);
+                if (/<img\s/i.test(inner) && new RegExp(`${esc}`, 'i').test(inner)) {
+                  foundBadgeImg = true;
+                }
+                if (/data-verify-token=/i.test(inner)) {
+                  foundToken = true;
+                }
+              }
+            }
+
+            if (foundDofollow) {
+              const details = ['dofollow backlink'];
+              if (foundBadgeImg) details.push('badge image');
+              if (foundToken) details.push('verify token');
+              core.setOutput('found', 'true');
               core.setOutput('message', `Badge verified on ${url} — found: ${details.join(', ')}.`);
+            } else if (foundNofollow) {
+              core.setOutput('found', 'false');
+              core.setOutput('message', `Found a link to ${domain} on ${url}, but it is marked as **nofollow**. The badge link must be a **dofollow** link (remove \`rel="nofollow"\` from the \`<a>\` tag).`);
             } else {
-              core.setOutput('message', `No badge or backlink to ${domain} found on ${url}. We look for an <a href> link or <img src> pointing to ${domain}.`);
+              core.setOutput('found', 'false');
+              core.setOutput('message', `No link to ${domain} found on ${url}. We look for a dofollow \`<a href>\` link pointing to ${domain}.`);
             }
 
       - name: Post result comment
