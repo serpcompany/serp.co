@@ -58,9 +58,10 @@ jobs:
               return;
             }
 
-            // Check for actual <a href> link to the domain (not just any string mention)
-            const linkPattern = new RegExp(`<a\\s[^>]*href=["'][^"']*${domain.replace(/\./g, '\\.')}[^"']*["']`, 'i');
-            const imgPattern = new RegExp(`<img\\s[^>]*src=["'][^"']*${domain.replace(/\./g, '\\.')}[^"']*["']`, 'i');
+            // Check for <a href> or <img src> pointing to the exact domain (not subdomains like help.serp.co)
+            const esc = domain.replace(/\./g, '\\.');
+            const linkPattern = new RegExp(`<a\\s[^>]*href=["']https?://(www\\.)?${esc}[/"']`, 'i');
+            const imgPattern = new RegExp(`<img\\s[^>]*src=["']https?://(www\\.)?${esc}[/"']`, 'i');
             const hasLink = linkPattern.test(html);
             const hasImage = imgPattern.test(html);
             const hasToken = /data-verify-token=/.test(html);
