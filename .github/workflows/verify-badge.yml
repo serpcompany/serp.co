@@ -58,15 +58,24 @@ jobs:
               return;
             }
 
-            const hasBacklink = html.includes(domain);
+            // Check for actual <a href> link to the domain (not just any string mention)
+            const linkPattern = new RegExp(`<a\\s[^>]*href=["'][^"']*${domain.replace(/\./g, '\\.')}[^"']*["']`, 'i');
+            const imgPattern = new RegExp(`<img\\s[^>]*src=["'][^"']*${domain.replace(/\./g, '\\.')}[^"']*["']`, 'i');
+            const hasLink = linkPattern.test(html);
+            const hasImage = imgPattern.test(html);
             const hasToken = /data-verify-token=/.test(html);
 
-            core.setOutput('found', String(hasBacklink));
-            if (hasBacklink) {
-              const detail = hasToken ? 'Badge with verify token found.' : 'Backlink found (no verify token).';
-              core.setOutput('message', `Badge verified on ${url} — ${detail}`);
+            const hasBadge = hasLink || hasImage;
+            core.setOutput('found', String(hasBadge));
+
+            if (hasBadge) {
+              const details = [];
+              if (hasLink) details.push('backlink');
+              if (hasImage) details.push('badge image');
+              if (hasToken) details.push('verify token');
+              core.setOutput('message', `Badge verified on ${url} — found: ${details.join(', ')}.`);
             } else {
-              core.setOutput('message', `No backlink to ${domain} found on ${url}.`);
+              core.setOutput('message', `No badge or backlink to ${domain} found on ${url}. We look for an <a href> link or <img src> pointing to ${domain}.`);
             }
 
       - name: Post result comment
