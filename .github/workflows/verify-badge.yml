@@ -30,7 +30,7 @@ jobs:
             const badgeVerifiedLabel = 'badge-verified';
 
             function getSection(body, headingPattern) {
-              const match = body.match(new RegExp(`^## ${headingPattern}\\s*\\n+([\\s\\S]*?)(?=\\n## |\\n*$)`, 'im'));
+              const match = body.match(new RegExp(`(?:^|\\n)## ${headingPattern}\\s*\\n+([\\s\\S]*?)(?=\\n## |$)`, 'i'));
               return match?.[1]?.trim() || '';
             }
 
@@ -130,7 +130,7 @@ jobs:
             core.setOutput('found', 'false');
 
             if (!submission.name || !submission.url || !submission.slug) {
-              if (github.eventName === 'issue_comment') {
+              if (context.eventName === 'issue_comment') {
                 await comment(`:x: **Badge Check**\n\nCould not parse the required submission fields from this issue. @devinschumacher, this submission needs manual review before badge verification can continue.`);
               }
               return;
@@ -251,7 +251,7 @@ jobs:
             }
 
             function getSection(body, headingPattern) {
-              const match = body.match(new RegExp(`^## ${headingPattern}\\s*\\n+([\\s\\S]*?)(?=\\n## |\\n*$)`, 'im'));
+              const match = body.match(new RegExp(`(?:^|\\n)## ${headingPattern}\\s*\\n+([\\s\\S]*?)(?=\\n## |$)`, 'i'));
               return match?.[1]?.trim() || '';
             }
 
