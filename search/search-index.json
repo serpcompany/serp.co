@@ -1489,18 +1489,6 @@
       "other"
     ],
     "content": "",
-    "description": "Bark AI's Text-to-Speech Transforms Written Words into Lifelike Audio",
-    "name": "BARK",
-    "slug": "serp.ai",
-    "url": "/products/serp.ai",
-    "website": "https://serp.ly/bark"
-  },
-  {
-    "category": "other",
-    "categories": [
-      "other"
-    ],
-    "content": "",
     "description": "Base64 Transforms Document Processing with AI-Powered Automation",
     "name": "Base64",
     "slug": "base64.ai",
@@ -30747,6 +30735,18 @@
     "slug": "serp.co",
     "url": "/products/serp.co",
     "website": "https://serp.ly/serp.co"
+  },
+  {
+    "category": "ai-directories",
+    "categories": [
+      "ai-directories"
+    ],
+    "content": "",
+    "description": "AI tools, companies, models, datasets, news, and resources",
+    "name": "SERP AI",
+    "slug": "serp.ai",
+    "url": "/products/serp.ai",
+    "website": "https://serp.ai"
   },
   {
     "category": "nextjs-templates",
